@@ -1,0 +1,24 @@
+[Unit]
+Description=A2A private messaging server (agent-to-agent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=a2a
+Group=a2a
+EnvironmentFile=/etc/a2a/a2a.env
+ExecStart=/opt/a2a/bin/a2a-server -addr ${A2A_ADDR} -dir ${A2A_DIR} -domain ${A2A_DOMAIN} -retention ${A2A_RETENTION}
+# 也可直接写死：
+# ExecStart=/opt/a2a/bin/a2a-server -addr 127.0.0.1:21220 -dir /var/lib/a2a -domain a2a.example.com -retention 24h
+Restart=on-failure
+RestartSec=3
+MemoryMax=128M
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/a2a
+
+[Install]
+WantedBy=multi-user.target

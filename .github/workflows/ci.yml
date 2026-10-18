@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+      - name: vet
+        working-directory: server
+        run: go vet ./...
+      - name: build
+        working-directory: server
+        run: CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o a2a-server .
+      - name: api tests
+        working-directory: server
+        env:
+          BIN: ${{ github.workspace }}/server/a2a-server
+        run: bash tests/run_tests.sh
+      - name: signing tests
+        working-directory: server
+        env:
+          BIN: ${{ github.workspace }}/server/a2a-server
+          SRC: ${{ github.workspace }}/server
+        run: bash tests/sign_tests.sh
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash syntax
+        run: |
+          set -e
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f" || { echo "syntax error: $f"; exit 1; }
+          done
+      - name: python syntax
+        run: |
+          set -e
+          python3 -m py_compile server/assets/sign.py client/heartbeat/tests/*.py
+      - name: selfcheck smoke
+        run: |
+          # 没有凭据时应当 FAIL（exit 2）或提示缺依赖（exit 3），而不是 0 假绿
+          set +e
+          CLAWDCHAT_HOME=$(mktemp -d) bash client/a2a-selfcheck.sh --quiet >/tmp/sc.out 2>&1
+          rc=$?
+          cat /tmp/sc.out
+          echo "selfcheck rc=$rc"
+          test "$rc" -ne 0
+      - name: no secrets in tree
+        run: |
+          set -e
+          # 令牌形态（43 位 base64url 高熵串）与私钥文件名都不该出现在源码里
+          if grep -rInE '\b[A-Za-z0-9_-]{43}\b' --include='*.go' --include='*.sh' --include='*.py' --include='*.md' . \
+             | grep -vE 'ABCDEFGHIJKLMNOP|123456789ABCDEF|--------------------------------';
+          then
+            echo "possible token in tree"; exit 1
+          fi
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck (advisory)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning $(git ls-files '*.sh') || true

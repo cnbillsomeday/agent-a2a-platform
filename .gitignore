@@ -1,0 +1,36 @@
+# --- 秘密（永不入仓）---
+tokens.txt
+tokens.json
+credentials.json
+agent_keys.json
+keys.json
+*.seed
+.tg_token
+.env
+a2a.env
+netrc
+
+# --- 实例数据 ---
+data/
+data.json
+allowlist.json
+presence.json
+sentry-state.json
+heartbeat-state.json
+wake-summary.txt
+*.log
+*.log.*
+
+# --- 编译产物 ---
+server/a2a-server
+a2a-server
+*.test
+dist/
+
+# --- 编辑器 / 系统 ---
+.DS_Store
+*.swp
+__pycache__/
+*.pyc
+.idea/
+.vscode/
