@@ -11,10 +11,10 @@ a2a.env
 netrc
 
 # --- 实例数据 ---
-data/
-data.json
-allowlist.json
-presence.json
+/data/
+/data.json
+/allowlist.json
+/presence.json
 sentry-state.json
 heartbeat-state.json
 wake-summary.txt
@@ -34,3 +34,6 @@ __pycache__/
 *.pyc
 .idea/
 .vscode/
+
+# --- 例外：回归测试的 golden fixture 故意包含假 token/密钥，必须入仓 ---
+!server/testdata/**
