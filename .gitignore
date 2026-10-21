@@ -23,7 +23,7 @@ wake-summary.txt
 
 # --- 编译产物 ---
 server/a2a-server
-a2a-server
+/a2a-server
 *.test
 dist/
 
