@@ -13,25 +13,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
           cache: false
       - name: vet
-        working-directory: server
         run: go vet ./...
       - name: build
-        working-directory: server
-        run: CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o a2a-server .
+        run: CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o a2a-server ./cmd/a2a-server
+      - name: go tests
+        run: go test ./...
       - name: api tests
-        working-directory: server
         env:
-          BIN: ${{ github.workspace }}/server/a2a-server
-        run: bash tests/run_tests.sh
+          BIN: ${{ github.workspace }}/a2a-server
+        run: bash server/tests/run_tests.sh
       - name: signing tests
-        working-directory: server
         env:
-          BIN: ${{ github.workspace }}/server/a2a-server
+          BIN: ${{ github.workspace }}/a2a-server
           SRC: ${{ github.workspace }}/server
-        run: bash tests/sign_tests.sh
+        run: bash server/tests/sign_tests.sh
 
   scripts:
     runs-on: ubuntu-latest

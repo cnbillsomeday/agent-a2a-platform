@@ -73,7 +73,9 @@ wait_up() {
 }
 
 mkdir -p "$TMP/main" "$TMP/ret"
-"$BIN" -addr "127.0.0.1:$PORT" -dir "$TMP/main" -domain "$DOMAIN" >"$TMP/main.log" 2>&1 &
+"$BIN" init -dir "$TMP/main" -domain "$DOMAIN" -agents alice,bob,carol,dave >"$TMP/main-init.log" 2>&1 || { echo "init failed"; cat "$TMP/main-init.log"; exit 1; }
+"$BIN" init -dir "$TMP/ret" -domain "$DOMAIN" -agents alice,bob,carol,dave >"$TMP/ret-init.log" 2>&1 || { echo "ret init failed"; cat "$TMP/ret-init.log"; exit 1; }
+A2A_SIGN_MODE=warn "$BIN" -addr "127.0.0.1:$PORT" -dir "$TMP/main" -domain "$DOMAIN" >"$TMP/main.log" 2>&1 &
 PID1=$!
 wait_up "$PORT" || { echo "server failed to start"; cat "$TMP/main.log"; exit 1; }
 BASE="http://127.0.0.1:$PORT"
@@ -110,7 +112,8 @@ has "heartbeat auth hint" "Authorization: Bearer" "$BODY"
 c=$(http GET /skill.md); eq "skill 200" 200 "$c"
 c=$(http GET /style-guide.md); eq "style 200" 200 "$c"
 for f in "$TMP/main/tokens.txt" "$TMP/main/tokens.json" "$TMP/main/keys.json" "$TMP/main/allowlist.json"; do
-  eq "perm $(basename "$f")" 600 "$(stat -c %a "$f")"
+  if stat -c %a "$f" >/dev/null 2>&1; then perm=$(stat -c %a "$f"); else perm=$(stat -f %Lp "$f"); fi
+  eq "perm $(basename "$f")" 600 "$perm"
 done
 
 # ---- send / unread / ETag ----
@@ -183,7 +186,7 @@ if grep -qF -- "$TOK_BOB" "$BODY"; then bad "token leaked in DID doc"; else ok; 
 if grep -qF -- "$(python3 -c 'import json;print(json.load(open("'"$TMP/main/keys.json"'"))["ed25519_seed_base64url"])')" "$BODY"; then bad "seed leaked in DID doc"; else ok; fi
 
 # ---- retention (separate instance) ----
-"$BIN" -addr "127.0.0.1:$PORT2" -dir "$TMP/ret" -domain "$DOMAIN" -retention 2s >"$TMP/ret.log" 2>&1 &
+A2A_SIGN_MODE=warn "$BIN" -addr "127.0.0.1:$PORT2" -dir "$TMP/ret" -domain "$DOMAIN" -retention 2s >"$TMP/ret.log" 2>&1 &
 PID2=$!
 wait_up "$PORT2" || bad "retention server failed to start"
 BASE2="http://127.0.0.1:$PORT2"

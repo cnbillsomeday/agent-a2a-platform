@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	_ "embed"
@@ -14,9 +14,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cnbillsomeday/agent-a2a-platform/wire"
 )
 
 // ---------- 方案二：Ed25519 消息签名 ----------
@@ -34,7 +37,7 @@ var signPySource string
 //go:embed assets/signing.md
 var signingDoc string
 
-const signPayloadVersion = "v1"
+const signPayloadVersion = wire.SignPayloadVersion
 
 type agentKeyRec struct {
 	Slug       string     `json:"slug"`
@@ -44,7 +47,7 @@ type agentKeyRec struct {
 	// SeedRetiredAt 非空 = 该 agent 已登记自持公钥、平台托管的 seed 已删除，
 	// 平台不再持有能代表它签名的私钥。
 	SeedRetiredAt *time.Time `json:"seed_retired_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 type agentKeysFile struct {
@@ -52,13 +55,29 @@ type agentKeysFile struct {
 }
 
 // signMode: off = 不验；warn = 验但放行（记录）；strict = 无签名/验签失败一律 403
-func signMode() string {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("A2A_SIGN_MODE")))
-	switch v {
+func normalizeSignMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "off", "warn", "strict":
-		return v
+		return strings.ToLower(strings.TrimSpace(v))
 	}
-	return "warn"
+	return ""
+}
+
+// effectiveSignMode resolves the signing mode for a server instance:
+// explicit instance setting > A2A_SIGN_MODE env > strict.
+//
+// strict is the default so the platform can never store an unsigned message
+// that every client is configured to reject: the sender gets a clear 403
+// instead of a message that silently dies on the receiver side. Legacy
+// deployments that still cannot sign must set A2A_SIGN_MODE=warn explicitly.
+func effectiveSignMode(override string) string {
+	if mode := normalizeSignMode(override); mode != "" {
+		return mode
+	}
+	if mode := normalizeSignMode(os.Getenv("A2A_SIGN_MODE")); mode != "" {
+		return mode
+	}
+	return "strict"
 }
 
 // loadAgentKeys 为每个 allowlist 成员准备密钥；缺失则生成。
@@ -168,8 +187,7 @@ func decodeKeyBytes(s string) ([]byte, error) {
 
 // SignPayload 是与客户端逐字节一致的待签串。
 func SignPayload(from, to string, ts int64, nonce, content string) string {
-	sum := sha256.Sum256([]byte(content))
-	return fmt.Sprintf("%s|%s|%s|%d|%s|%s", signPayloadVersion, from, to, ts, nonce, hex.EncodeToString(sum[:]))
+	return wire.SignPayload(from, to, ts, nonce, content)
 }
 
 // VerifyMessage 用 from 名下已登记的任一公钥验签。
@@ -265,6 +283,13 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request, slug strin
 		writeErr(w, http.StatusConflict, "no platform-held seed for this agent; register your own public key instead")
 		return
 	}
+	if rec.RedeemedAt != nil && !allowReseed() {
+		s.log.Printf("key redeem: slug=%s refused (already redeemed at %s)", slug, rec.RedeemedAt.UTC().Format(time.RFC3339))
+		writeErr(w, http.StatusConflict,
+			"seed already redeemed once; register your own public key via /a2a/keys/register, "+
+				"or restart the server with A2A_ALLOW_RESEDEEM=1 to hand out another copy")
+		return
+	}
 	first := rec.RedeemedAt == nil
 	if first {
 		now := time.Now().UTC()
@@ -293,9 +318,9 @@ func (s *Server) handleRedeem(w http.ResponseWriter, r *http.Request, slug strin
 func (s *Server) handleRegisterKey(w http.ResponseWriter, r *http.Request, slug string) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var in struct {
-		PublicKey        string `json:"public_key"`
-		PublicKeyB64URL  string `json:"public_key_b64url"`
-		PublicKeyHex     string `json:"public_key_hex"`
+		PublicKey       string `json:"public_key"`
+		PublicKeyB64URL string `json:"public_key_b64url"`
+		PublicKeyHex    string `json:"public_key_hex"`
 		// RetirePlatformSeed 为 true 时，登记成功后删除平台托管的 seed，
 		// 让 did.json 的 #key-1 变成 peer 自己的公钥（平台不再能为它签名）。
 		RetirePlatformSeed bool `json:"retire_platform_seed"`
@@ -357,6 +382,29 @@ func (s *Server) handleRegisterKey(w http.ResponseWriter, r *http.Request, slug 
 		"platform_seed_retired": retired, "has_platform_seed": s.cfg.agentKey[slug].Seed != ""})
 }
 
+// allowReseed re-enables handing out the platform-held seed more than once.
+// Off by default: a leaked bearer token must not be able to pull the private
+// key forever.
+func allowReseed() bool {
+	v := strings.TrimSpace(os.Getenv("A2A_ALLOW_RESEDEEM"))
+	if v == "" {
+		return false
+	}
+	ok, err := strconv.ParseBool(v)
+	return err == nil && ok
+}
+
+// allowTrimmedSignature re-enables verifying a signature computed over the
+// trimmed message body.
+func allowTrimmedSignature() bool {
+	v := strings.TrimSpace(os.Getenv("A2A_ALLOW_TRIMMED_SIG"))
+	if v == "" {
+		return false
+	}
+	ok, err := strconv.ParseBool(v)
+	return err == nil && ok
+}
+
 // retirePlatformSeed 删除平台托管 seed，只保留 peer 自持公钥。
 // 前置：至少已登记一把自持公钥（否则会把账号弄成无人能签）。
 // 之后 did.json 的 #key-1 即该 peer 自己的公钥，redeem 会回 409。
@@ -406,7 +454,7 @@ func (s *Server) handleRetireSeed(w http.ResponseWriter, r *http.Request, slug s
 // GET /a2a/keys (Bearer) —— 查看本人密钥状态
 func (s *Server) handleMyKeys(w http.ResponseWriter, r *http.Request, slug string) {
 	rec := s.cfg.agentKey[slug]
-	out := map[string]any{"success": true, "slug": slug, "sign_mode": signMode(), "payload_version": signPayloadVersion}
+	out := map[string]any{"success": true, "slug": slug, "sign_mode": s.signMode, "payload_version": signPayloadVersion}
 	if rec != nil {
 		out["has_platform_seed"] = rec.Seed != ""
 		out["redeemed"] = rec.RedeemedAt != nil

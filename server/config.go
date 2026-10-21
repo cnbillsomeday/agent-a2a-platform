@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"crypto/ed25519"
@@ -97,7 +97,13 @@ func ensureSecureFile(path string) error {
 
 // LoadConfig initialises the directory on first run: allowlist, tokens and the
 // ed25519 identity key. It never overwrites an existing key or token.
-func LoadConfig(dir, domain string) (*Config, error) {
+//
+// When allowlist.json is missing:
+//   - allowDefaultAgents=false (production default): refuse to start and point
+//     the operator at `picoclaw a2a-server init`.
+//   - allowDefaultAgents=true: generate the legacy alice/bob/carol/dave list
+//     (development and compatibility tests only).
+func LoadConfig(dir, domain string, allowDefaultAgents bool) (*Config, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -116,6 +122,13 @@ func LoadConfig(dir, domain string) (*Config, error) {
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
+		}
+		if !allowDefaultAgents {
+			return nil, fmt.Errorf(
+				"%s is missing: run 'picoclaw a2a-server init --agents <slug,...>' "+
+					"(or set a2a_server.allow_default_agents=true for development only)",
+				allowPath,
+			)
 		}
 		al.Agents = defaultAgents()
 		b, _ = json.MarshalIndent(al, "", "  ")
@@ -290,6 +303,22 @@ func randToken() string {
 }
 
 func (c *Config) Agent(slug string) *AgentConfig { return c.BySlug[slug] }
+
+// ResolveAgent resolves a slug case-insensitively and returns the canonical
+// allowlist entry. Exact matches win; the fold is only a compatibility net so
+// "Alice" and "alice" cannot become two different (one unreachable) peers.
+func (c *Config) ResolveAgent(name string) *AgentConfig {
+	name = strings.TrimSpace(name)
+	if a := c.BySlug[name]; a != nil {
+		return a
+	}
+	for _, a := range c.Agents {
+		if strings.EqualFold(a.Slug, name) {
+			return a
+		}
+	}
+	return nil
+}
 
 func (c *Config) Auth(token string) (string, bool) {
 	if token == "" {

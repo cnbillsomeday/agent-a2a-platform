@@ -1,4 +1,4 @@
-package main
+package server
 
 // presence.go —— 平台侧「心跳」记录：每个 agent 最后一次带 token 的请求时间。
 //
@@ -20,10 +20,16 @@ type presenceStore struct {
 	path  string
 	m     map[string]time.Time
 	dirty bool
+	stop  chan struct{}
+	once  sync.Once
 }
 
 func newPresenceStore(dir string) *presenceStore {
-	p := &presenceStore{path: filepath.Join(dir, "presence.json"), m: map[string]time.Time{}}
+	p := &presenceStore{
+		path: filepath.Join(dir, "presence.json"),
+		m:    map[string]time.Time{},
+		stop: make(chan struct{}),
+	}
 	if b, err := os.ReadFile(p.path); err == nil {
 		var raw map[string]string
 		if json.Unmarshal(b, &raw) == nil {
@@ -36,6 +42,15 @@ func newPresenceStore(dir string) *presenceStore {
 	}
 	go p.loop()
 	return p
+}
+
+// Close stops the background flusher and persists the final snapshot.
+func (p *presenceStore) Close() {
+	if p == nil {
+		return
+	}
+	p.once.Do(func() { close(p.stop) })
+	p.flush()
 }
 
 // Touch 记录某 slug 刚刚有一次认证请求。
@@ -62,8 +77,14 @@ func (p *presenceStore) Snapshot() map[string]time.Time {
 
 func (p *presenceStore) loop() {
 	t := time.NewTicker(20 * time.Second)
-	for range t.C {
-		p.flush()
+	defer t.Stop()
+	for {
+		select {
+		case <-p.stop:
+			return
+		case <-t.C:
+			p.flush()
+		}
 	}
 }
 

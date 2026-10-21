@@ -89,7 +89,7 @@ if [ -n "$BIN_SRC" ]; then
 elif [ "$FROM_SOURCE" = "1" ]; then
   command -v go >/dev/null 2>&1 || die "没有 go；先装 Go 或用 --binary/--repo 下载"
   say "从源码编译（$REPO_DIR/server）"
-  ( cd "$REPO_DIR/server" && CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$TMPBIN" . ) \
+  ( cd "$REPO_DIR" && CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$TMPBIN" ./cmd/a2a-server ) \
     || die "编译失败"
 
 elif [ -n "$REPO" ]; then
@@ -98,9 +98,9 @@ elif [ -n "$REPO" ]; then
   curl -fL --retry 3 -m 120 -o "$TMPBIN" "$URL" || die "下载失败（检查 --repo / 网络 / 是否有 Release）"
   chmod 0755 "$TMPBIN"
 
-elif [ -x "$REPO_DIR/server/a2a-server" ]; then
+elif [ -x "$REPO_DIR/a2a-server" ]; then
   say "使用仓库内已编译的二进制"
-  install -m 0755 "$REPO_DIR/server/a2a-server" "$TMPBIN"
+  install -m 0755 "$REPO_DIR/a2a-server" "$TMPBIN"
 
 else
   die "没有可用的二进制。三种办法：

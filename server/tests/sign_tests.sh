@@ -19,6 +19,10 @@ cleanup() { [ -n "${PID:-}" ] && kill "$PID" 2>/dev/null
             [ -n "${PIDW:-}" ] && kill "$PIDW" 2>/dev/null; wait 2>/dev/null; }
 trap cleanup EXIT
 
+# --- 初始化数据目录（新 CLI 不再自动创建演示数据） ---
+"$BIN" init -dir "$TMP/s" -domain test.example -agents alice,bob,carol,dave >"$TMP/s-init.log" 2>&1 || { cat "$TMP/s-init.log"; exit 1; }
+"$BIN" init -dir "$TMP/w" -domain test.example -agents alice,bob,carol,dave >"$TMP/w-init.log" 2>&1 || { cat "$TMP/w-init.log"; exit 1; }
+
 # --- 起 strict 实例 ---
 A2A_SIGN_MODE=strict "$BIN" -addr "127.0.0.1:$PORT" -dir "$TMP/s" -domain test.example >"$TMP/s.log" 2>&1 &
 PID=$!
@@ -69,8 +73,9 @@ d = json.load(open(sys.argv[1]))
 s = d["seed_base64url"]; raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 open(sys.argv[2], "wb").write(raw)
 PY
-R2=$(curl -s "$B/a2a/keys/redeem" -H "Authorization: Bearer $TA")
-contains "redeem second not-first" "$R2" '"first_redeem":false'
+R2=$(curl -s -o "$TMP/redeem2.json" -w '%{http_code}' "$B/a2a/keys/redeem" -H "Authorization: Bearer $TA")
+eq "redeem second rejected" "$R2" "409"
+contains "redeem second explains" "$(cat "$TMP/redeem2.json")" "already redeemed once"
 
 # 5) 正确签名 -> 200 signed=true
 msg() { python3 "$SRC/assets/sign.py" sign --keyfile "$TMP/k.seed" --from "$1" --to "$2" --content "$3" > "$4"; }
@@ -176,8 +181,8 @@ p = sg.payload("alice", "dave", ts, nonce, "trim-sign compat")
 json.dump({"content": "trim-sign compat   ", "timestamp": ts, "nonce": nonce,
            "sig": sg.sign(seed, p.encode())}, open(sys.argv[3], "w"))
 PY
-eq "trim-sign compat accepted" "$(post "$B" dave "$TA" "$TMP/trimsign.json")" "200"
-contains "trim-sign compat ok" "$(cat "$TMP/resp.json")" '"sig_state":"ok"'
+eq "trim-sign mismatch rejected" "$(post "$B" dave "$TA" "$TMP/trimsign.json")" "403"
+contains "trim-sign mismatch error" "$(cat "$TMP/resp.json")" "signature verification failed"
 
 # 12) keys 状态视图
 KJ=$(curl -s "$B/api/v1/keys" -H "Authorization: Bearer $TW")
