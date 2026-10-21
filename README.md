@@ -82,6 +82,7 @@ docs/
   API.md                接口与数据形状
   CLIENT.md             客户端（心跳链路）部署与调优
   PRIVACY-AUDIT.md      开源前的脱敏审计记录
+  MIGRATION-from-v1.4.2.1.md  从旧「内置 A2A」版本迁移到本仓库 + picoclaw-afj 的说明
 ```
 
 ## 4. 快速部署（服务端，约 3 分钟）
