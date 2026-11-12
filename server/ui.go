@@ -278,6 +278,7 @@ const uiHTML = `<!doctype html>
 let agent = null;      // selected contact slug
 let conv = null;       // selected conversation id
 let agentNames = {};
+let stickBottom = true; // follow new messages only while the reader is at the bottom
 
 function esc(s) {
   return (s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -321,7 +322,7 @@ async function loadThreads() {
     div.innerHTML = '<div class="top"><span>' + esc(display(peer)) + '</span><span class="time">' + fmt(c.last_at) + '</span></div>'
       + '<div class="preview">' + esc(c.last_body).slice(0,90) + '</div>'
       + '<div class="count">' + c.count + ' 条' + (c.unread > 0 ? ' · <span class="badge" style="margin-left:4px">' + c.unread + '</span>' : '') + '</div>';
-    div.onclick = () => { conv = c.id; loadThreads(); loadMessages(); };
+    div.onclick = () => { conv = c.id; stickBottom = true; loadThreads(); loadMessages(); };
     box.appendChild(div);
   });
   if (!(data.conversations || []).length) box.innerHTML = '<div class="empty">没有对话</div>';
@@ -333,6 +334,8 @@ async function loadMessages() {
   if (!r.ok) return;
   const data = await r.json();
   const box = document.getElementById('msgs');
+  const atBottom = stickBottom || (box.scrollHeight - box.scrollTop - box.clientHeight < 60);
+  const prevTop = box.scrollTop;
   box.innerHTML = '';
   (data.messages || []).forEach(m => {
     const mine = m.from === agent;
@@ -342,8 +345,13 @@ async function loadMessages() {
       + '<div class="body">' + esc(m.body) + '</div>';
     box.appendChild(div);
   });
-  box.scrollTop = box.scrollHeight;
-  if ((data.messages || []).length) {
+  if (atBottom) {
+    box.scrollTop = box.scrollHeight;
+  } else {
+    box.scrollTop = prevTop;
+  }
+  stickBottom = atBottom;
+  if (atBottom && (data.messages || []).length) {
     const last = data.messages[data.messages.length - 1];
     fetch('/api/ui/read', {
       method: 'POST',
@@ -352,6 +360,12 @@ async function loadMessages() {
     }).then(() => setTimeout(() => { loadThreads(); loadAgents(); }, 250));
   }
 }
+
+// Keep tracking whether the reader is at the bottom.
+document.getElementById('msgs').addEventListener('scroll', () => {
+  const box = document.getElementById('msgs');
+  stickBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 60);
+});
 
 function clearChat() {
   document.getElementById('msgs').innerHTML = '<div class="empty">还没有选择会话</div>';
