@@ -107,6 +107,13 @@ func New(opts Options) (*Instance, error) {
 		return nil, fmt.Errorf("a2a server: open archive: %w", err)
 	}
 	store.SetArchive(archive)
+	// First start after enabling the archive: seed it with the messages still
+	// inside the live retention window so the UI is not empty on day one.
+	if archive.Count() == 0 {
+		for _, m := range store.Snapshot() {
+			_ = archive.Append(m)
+		}
+	}
 
 	srv := NewServer(cfg, store, opts.Logger, opts.SignMode)
 	srv.archive = archive

@@ -46,6 +46,15 @@ type Store struct {
 	archive  *Archive
 }
 
+// Snapshot returns a copy of the currently retained messages.
+func (s *Store) Snapshot() []*Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*Message, len(s.messages))
+	copy(out, s.messages)
+	return out
+}
+
 // SetArchive attaches a long-lived archive that receives every accepted
 // message. It is optional; nil simply disables archiving.
 func (s *Store) SetArchive(a *Archive) {
