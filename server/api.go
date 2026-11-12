@@ -36,6 +36,7 @@ type Server struct {
 	uiPass      string
 	uiAvatarDir string
 	readState   *readState
+	cold        *coldArchive
 }
 
 func NewServer(cfg *Config, store *Store, logger *log.Logger, signModeOverride string) *Server {

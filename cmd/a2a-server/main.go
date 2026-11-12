@@ -68,6 +68,7 @@ Run flags:
   -ui-user string     web UI basic-auth user (env A2A_UI_USER; UI disabled when empty)
   -ui-pass string     web UI basic-auth password (env A2A_UI_PASS)
   -ui-avatars string  directory with <slug>.png avatars for the UI (env A2A_UI_AVATARS)
+  -archive-cold string  rotated *.jsonl.gz archive directory (env A2A_ARCHIVE_COLD; default <dir>/archive)
   -allow-default-agents  allow the built-in demo agents
 `, defaultAddr, defaultDir, defaultDomain, defaultRetention)
 }
@@ -84,6 +85,7 @@ func runServer(args []string) int {
 	uiUser := fs.String("ui-user", os.Getenv("A2A_UI_USER"), "web UI basic-auth user")
 	uiPass := fs.String("ui-pass", os.Getenv("A2A_UI_PASS"), "web UI basic-auth password")
 	uiAvatars := fs.String("ui-avatars", os.Getenv("A2A_UI_AVATARS"), "directory with <slug>.png avatars")
+	archiveCold := fs.String("archive-cold", os.Getenv("A2A_ARCHIVE_COLD"), "rotated *.jsonl.gz archive directory")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -100,6 +102,7 @@ func runServer(args []string) int {
 		UIUser:             strings.TrimSpace(*uiUser),
 		UIPass:             *uiPass,
 		UIAvatarDir:        strings.TrimSpace(*uiAvatars),
+		ColdArchiveDir:     strings.TrimSpace(*archiveCold),
 		Logger:             logger,
 	})
 	if err != nil {

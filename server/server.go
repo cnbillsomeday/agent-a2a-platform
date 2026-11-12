@@ -37,6 +37,9 @@ type Options struct {
 	UIPass string
 	// UIAvatarDir optionally holds <slug>.png avatars for the UI.
 	UIAvatarDir string
+	// ColdArchiveDir points at rotated *.jsonl.gz archives (default
+	// <DataDir>/archive). The UI streams from it when the hot window ends.
+	ColdArchiveDir string
 }
 
 // Instance is a running (or runnable) A2A server.
@@ -143,6 +146,17 @@ func New(opts Options) (*Instance, error) {
 		}
 	}
 	srv.readState = readState
+
+	coldDir := strings.TrimSpace(opts.ColdArchiveDir)
+	if coldDir == "" {
+		coldDir = filepath.Join(opts.DataDir, "archive")
+	}
+	cold, err := OpenColdArchive(coldDir)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("a2a server: open cold archive: %w", err)
+	}
+	srv.cold = cold
 
 	inst := &Instance{
 		opts:    opts,

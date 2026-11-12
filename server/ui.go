@@ -120,11 +120,37 @@ func (s *Server) handleUIConversations(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 2000 {
 		limit = 200
 	}
-	list := s.archive.Conversations(
-		r.URL.Query().Get("q"),
-		r.URL.Query().Get("agent"),
-		limit,
-	)
+	query := r.URL.Query().Get("q")
+	filterAgent := r.URL.Query().Get("agent")
+	list := s.archive.Conversations(query, filterAgent, limit)
+
+	// Conversations that only live in the rotated archives still need to show
+	// up in the list; hot data wins when both know the same conversation.
+	if s.cold != nil {
+		s.cold.Refresh(10 * time.Minute)
+		seen := make(map[string]struct{}, len(list))
+		for _, c := range list {
+			seen[c.ID] = struct{}{}
+		}
+		q := strings.ToLower(strings.TrimSpace(query))
+		for _, c := range s.cold.Conversations() {
+			if _, ok := seen[c.ID]; ok {
+				continue
+			}
+			if filterAgent != "" && c.From != filterAgent && c.To != filterAgent {
+				continue
+			}
+			if q != "" && !strings.Contains(strings.ToLower(c.From+" "+c.To+" "+c.LastBody), q) {
+				continue
+			}
+			list = append(list, c)
+		}
+		sort.SliceStable(list, func(i, j int) bool { return list[i].LastAt.After(list[j].LastAt) })
+		if limit > 0 && len(list) > limit {
+			list = list[:limit]
+		}
+	}
+
 	for i := range list {
 		list[i].Unread = s.archive.UnreadAfter(list[i].ID, s.readState.get(list[i].ID))
 	}
@@ -154,8 +180,53 @@ func (s *Server) handleUIMessages(w http.ResponseWriter, r *http.Request) {
 			before = ts
 		}
 	}
-	msgs := s.archive.Messages(conv, limit, before)
-	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+	msgs, hasMore := s.uiMessagePage(conv, limit, before)
+	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs, "has_more": hasMore})
+}
+
+// uiMessagePage merges the in-memory hot window with the rotated archives and
+// reports whether anything older may still be waiting on disk.
+func (s *Server) uiMessagePage(conv string, limit int, before time.Time) ([]*Message, bool) {
+	hot := s.archive.Messages(conv, limit, before)
+
+	var cold []*Message
+	if s.cold != nil {
+		s.cold.Refresh(10 * time.Minute)
+		switch {
+		case !before.IsZero():
+			cold = s.cold.Messages(conv, before, limit)
+		case len(hot) == 0:
+			// Conversation entirely outside the hot retention window.
+			cold = s.cold.Messages(conv, time.Time{}, limit)
+		}
+	}
+
+	seen := make(map[string]struct{}, len(hot)+len(cold))
+	merged := make([]*Message, 0, len(hot)+len(cold))
+	for _, m := range cold {
+		if _, ok := seen[m.ID]; ok {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		merged = append(merged, m)
+	}
+	for _, m := range hot {
+		if _, ok := seen[m.ID]; ok {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		merged = append(merged, m)
+	}
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].CreatedAt.Before(merged[j].CreatedAt) })
+	if limit > 0 && len(merged) > limit {
+		merged = merged[len(merged)-limit:]
+	}
+
+	hasMore := len(hot) >= limit || len(cold) >= limit
+	if !hasMore && len(merged) > 0 && s.cold != nil {
+		hasMore = s.cold.HasBefore(conv, merged[0].CreatedAt)
+	}
+	return merged, hasMore
 }
 
 // handleUIRead advances the read position of one conversation.
@@ -258,6 +329,9 @@ const uiHTML = `<!doctype html>
   .msg.left { align-self:flex-start; background:#171a21; border-top-left-radius:4px; }
   .msg.right { align-self:flex-end; background:#22405e; border-color:#2b4f73; border-top-right-radius:4px; }
   .empty { padding:24px; color:#6b7488; }
+  .older-bar { display:flex; justify-content:center; padding:4px 0 10px; }
+  .older-bar button { background:#1c2330; border:1px solid #2a3040; color:#9fb0c8; border-radius:8px; padding:5px 12px; cursor:pointer; }
+  .older-bar button:disabled { opacity:.5; cursor:default; }
 </style>
 </head>
 <body>
@@ -275,10 +349,13 @@ const uiHTML = `<!doctype html>
   </div>
 </main>
 <script>
-let agent = null;      // selected contact slug
-let conv = null;       // selected conversation id
+let agent = null;       // selected contact slug
+let conv = null;        // selected conversation id
 let agentNames = {};
 let stickBottom = true; // follow new messages only while the reader is at the bottom
+let msgsState = [];     // messages currently on screen, oldest first
+let hasMore = false;    // older pages may exist on disk
+let loadingOlder = false;
 
 function esc(s) {
   return (s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -300,7 +377,7 @@ async function loadAgents() {
     div.innerHTML = '<div class="avatar"><span>' + esc(initials(a.name)) + '</span><img src="/ui/avatar/' + encodeURIComponent(a.slug) + '.png" alt="" onerror="this.style.display=\'none\'"></div>'
       + '<div><div class="name">' + esc(a.name) + '</div><div class="slug">' + esc(a.slug) + '</div></div>'
       + (a.unread > 0 ? '<span class="badge">' + a.unread + '</span>' : '');
-    div.onclick = () => { agent = a.slug; conv = null; loadAgents(); loadThreads(); clearChat(); };
+    div.onclick = () => { agent = a.slug; conv = null; msgsState = []; hasMore = false; loadAgents(); loadThreads(); clearChat(); };
     box.appendChild(div);
   });
   if (!agent && (data.agents || []).length) { agent = data.agents[0].slug; loadAgents(); loadThreads(); }
@@ -322,22 +399,26 @@ async function loadThreads() {
     div.innerHTML = '<div class="top"><span>' + esc(display(peer)) + '</span><span class="time">' + fmt(c.last_at) + '</span></div>'
       + '<div class="preview">' + esc(c.last_body).slice(0,90) + '</div>'
       + '<div class="count">' + c.count + ' 条' + (c.unread > 0 ? ' · <span class="badge" style="margin-left:4px">' + c.unread + '</span>' : '') + '</div>';
-    div.onclick = () => { conv = c.id; stickBottom = true; loadThreads(); loadMessages(); };
+    div.onclick = () => { conv = c.id; msgsState = []; hasMore = false; stickBottom = true; loadThreads(); loadMessages(true); };
     box.appendChild(div);
   });
   if (!(data.conversations || []).length) box.innerHTML = '<div class="empty">没有对话</div>';
 }
 
-async function loadMessages() {
-  if (!conv) return;
-  const r = await fetch('/api/ui/messages?conv=' + encodeURIComponent(conv) + '&limit=500');
-  if (!r.ok) return;
-  const data = await r.json();
+function renderMessages(scrollBottom) {
   const box = document.getElementById('msgs');
-  const atBottom = stickBottom || (box.scrollHeight - box.scrollTop - box.clientHeight < 60);
-  const prevTop = box.scrollTop;
   box.innerHTML = '';
-  (data.messages || []).forEach(m => {
+  if (hasMore) {
+    const bar = document.createElement('div');
+    bar.className = 'older-bar';
+    const btn = document.createElement('button');
+    btn.textContent = loadingOlder ? '加载中…' : '加载更早';
+    btn.disabled = loadingOlder;
+    btn.onclick = loadOlder;
+    bar.appendChild(btn);
+    box.appendChild(bar);
+  }
+  msgsState.forEach(m => {
     const mine = m.from === agent;
     const div = document.createElement('div');
     div.className = 'msg ' + (mine ? 'right' : 'left');
@@ -345,14 +426,38 @@ async function loadMessages() {
       + '<div class="body">' + esc(m.body) + '</div>';
     box.appendChild(div);
   });
-  if (atBottom) {
-    box.scrollTop = box.scrollHeight;
+  if (scrollBottom) box.scrollTop = box.scrollHeight;
+}
+
+async function loadMessages(reset) {
+  if (!conv) return;
+  const box = document.getElementById('msgs');
+  const atBottom = stickBottom || (box.scrollHeight - box.scrollTop - box.clientHeight < 60);
+  const r = await fetch('/api/ui/messages?conv=' + encodeURIComponent(conv) + '&limit=500');
+  if (!r.ok) return;
+  const data = await r.json();
+  const fetched = data.messages || [];
+  hasMore = !!data.has_more;
+
+  if (reset) {
+    msgsState = fetched;
+    stickBottom = true;
+    renderMessages(true);
   } else {
-    box.scrollTop = prevTop;
+    const known = new Set(msgsState.map(m => m.id));
+    const fresh = fetched.filter(m => !known.has(m.id));
+    if (fresh.length) {
+      msgsState = msgsState.concat(fresh);
+      renderMessages(atBottom);
+      stickBottom = atBottom;
+    } else {
+      // No new messages; still refresh the "load older" affordance.
+      renderMessages(atBottom);
+    }
   }
-  stickBottom = atBottom;
-  if (atBottom && (data.messages || []).length) {
-    const last = data.messages[data.messages.length - 1];
+
+  if (atBottom && fetched.length) {
+    const last = fetched[fetched.length - 1];
     fetch('/api/ui/read', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -361,21 +466,41 @@ async function loadMessages() {
   }
 }
 
-// Keep tracking whether the reader is at the bottom.
-document.getElementById('msgs').addEventListener('scroll', () => {
+async function loadOlder() {
+  if (!conv || !msgsState.length || loadingOlder) return;
+  loadingOlder = true;
   const box = document.getElementById('msgs');
-  stickBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 60);
-});
+  const prevHeight = box.scrollHeight;
+  const prevTop = box.scrollTop;
+  renderMessages(false);
+  const before = msgsState[0].created_at;
+  const r = await fetch('/api/ui/messages?conv=' + encodeURIComponent(conv) + '&limit=200&before=' + encodeURIComponent(before));
+  const data = r.ok ? await r.json() : {messages: []};
+  const known = new Set(msgsState.map(m => m.id));
+  const older = (data.messages || []).filter(m => !known.has(m.id));
+  hasMore = !!data.has_more;
+  msgsState = older.concat(msgsState);
+  loadingOlder = false;
+  renderMessages(false);
+  box.scrollTop = prevTop + (box.scrollHeight - prevHeight);
+}
 
 function clearChat() {
+  msgsState = [];
+  hasMore = false;
   document.getElementById('msgs').innerHTML = '<div class="empty">还没有选择会话</div>';
   document.getElementById('chat-title').textContent = '选择左侧的对话人';
   document.getElementById('chat-meta').textContent = '';
 }
 
+// Keep tracking whether the reader is at the bottom.
+document.getElementById('msgs').addEventListener('scroll', () => {
+  const box = document.getElementById('msgs');
+  stickBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 60);
+});
 document.getElementById('q').addEventListener('input', loadThreads);
 loadAgents();
-setInterval(() => { loadThreads(); if (conv) loadMessages(); }, 5000);
+setInterval(() => { loadThreads(); if (conv) loadMessages(false); }, 5000);
 </script>
 </body>
 </html>
