@@ -299,12 +299,13 @@ const uiHTML = `<!doctype html>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
-  body { margin:0; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; background:#0f1115; color:#e6e6e6; overflow:hidden; }
-  header { height:52px; padding:0 18px; border-bottom:1px solid #232833; display:flex; align-items:center; gap:14px; }
+  body { margin:0; height:100%; display:flex; flex-direction:column; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; background:#0f1115; color:#e6e6e6; overflow:hidden; }
+  header { flex:0 0 auto; min-height:52px; padding:0 18px; border-bottom:1px solid #232833; display:flex; align-items:center; gap:14px; }
   header h1 { font-size:15px; margin:0; font-weight:600; }
   header .stat { color:#8b93a7; font-size:12px; }
   header input { margin-left:auto; background:#171a21; border:1px solid #2a3040; color:#e6e6e6; padding:7px 10px; border-radius:8px; min-width:260px; }
-  main { display:grid; grid-template-columns:200px 330px 1fr; height:calc(100% - 52px); }
+  .back { display:none; background:none; border:0; color:#9fb0c8; font-size:22px; line-height:1; padding:0 6px 2px 0; cursor:pointer; }
+  main { flex:1 1 auto; min-height:0; display:grid; grid-template-columns:200px 330px 1fr; }
   .col { overflow:auto; border-right:1px solid #232833; }
   .col:last-child { border-right:none; }
   .col-title { position:sticky; top:0; background:#12151c; padding:9px 12px; font-size:12px; color:#8b93a7; border-bottom:1px solid #1b1f28; z-index:2; }
@@ -336,15 +337,28 @@ const uiHTML = `<!doctype html>
   .older-bar { display:flex; justify-content:center; padding:4px 0 10px; }
   .older-bar button { background:#1c2330; border:1px solid #2a3040; color:#9fb0c8; border-radius:8px; padding:5px 12px; cursor:pointer; }
   .older-bar button:disabled { opacity:.5; cursor:default; }
+  @media (max-width: 820px) {
+    header { padding:0 12px; gap:8px; flex-wrap:wrap; padding-bottom:8px; }
+    header h1 { font-size:14px; }
+    header input { flex:1 1 100%; margin-left:0; min-width:0; padding:6px 9px; }
+    .back { display:inline-block; }
+    main { display:block; }
+    .col { display:none; height:100%; border-right:none; }
+    main.view-agents #agents-col { display:block; }
+    main.view-threads #threads-col { display:block; }
+    main.view-chat #chat { display:flex; }
+    .msg { max-width:86%; }
+  }
 </style>
 </head>
 <body>
 <header>
+  <button id="back" class="back" title="返回">‹</button>
   <h1>A2A 对话记录</h1>
   <span class="stat" id="stat"></span>
   <input id="q" type="search" placeholder="搜索内容 / 名字">
 </header>
-<main>
+<main id="main" class="view-agents">
   <div class="col" id="agents-col"><div class="col-title">对话人</div><div id="agents"></div></div>
   <div class="col" id="threads-col"><div class="col-title">对话列表</div><div id="threads"></div></div>
   <div class="col" id="chat">
@@ -360,6 +374,12 @@ let stickBottom = true; // follow new messages only while the reader is at the b
 let msgsState = [];     // messages currently on screen, oldest first
 let hasMore = false;    // older pages may exist on disk
 let loadingOlder = false;
+let currentPeer = null; // peer of the open thread (for the mobile title)
+
+const mainEl = () => document.getElementById('main');
+function setView(v) { const m = mainEl(); if (m) m.className = 'view-' + v; }
+function isNarrow() { return window.matchMedia('(max-width: 820px)').matches; }
+function resetViewForWidth() { const m = mainEl(); if (m && !isNarrow()) m.className = ''; }
 
 function esc(s) {
   return (s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -381,7 +401,7 @@ async function loadAgents() {
     div.innerHTML = '<div class="avatar"><span>' + esc(initials(a.name)) + '</span><img src="/ui/avatar/' + encodeURIComponent(a.slug) + '.png" alt="" onerror="this.style.display=\'none\'"></div>'
       + '<div><div class="name">' + esc(a.name) + '</div><div class="slug">' + esc(a.slug) + '</div></div>'
       + (a.unread > 0 ? '<span class="badge">' + a.unread + '</span>' : '');
-    div.onclick = () => { agent = a.slug; conv = null; msgsState = []; hasMore = false; loadAgents(); loadThreads(); clearChat(); };
+    div.onclick = () => { agent = a.slug; conv = null; msgsState = []; hasMore = false; setView('threads'); loadAgents(); loadThreads(); clearChat(); };
     box.appendChild(div);
   });
   if (!agent && (data.agents || []).length) { agent = data.agents[0].slug; loadAgents(); loadThreads(); }
@@ -403,7 +423,7 @@ async function loadThreads() {
     div.innerHTML = '<div class="top"><span>' + esc(display(peer)) + '</span><span class="time">' + fmt(c.last_at) + '</span></div>'
       + '<div class="preview">' + esc(c.last_body).slice(0,90) + '</div>'
       + '<div class="count">' + c.count + ' 条' + (c.unread > 0 ? ' · <span class="badge" style="margin-left:4px">' + c.unread + '</span>' : '') + '</div>';
-    div.onclick = () => { conv = c.id; msgsState = []; hasMore = false; stickBottom = true; loadThreads(); loadMessages(true); };
+    div.onclick = () => { conv = c.id; currentPeer = peer; msgsState = []; hasMore = false; stickBottom = true; setView('chat'); loadThreads(); loadMessages(true); };
     box.appendChild(div);
   });
   if (!(data.conversations || []).length) box.innerHTML = '<div class="empty">没有对话</div>';
@@ -444,6 +464,7 @@ async function loadMessages(reset) {
   hasMore = !!data.has_more;
 
   if (reset) {
+    if (currentPeer) document.getElementById('chat-title').textContent = display(currentPeer);
     msgsState = fetched;
     stickBottom = true;
     renderMessages(true);
@@ -502,7 +523,15 @@ document.getElementById('msgs').addEventListener('scroll', () => {
   const box = document.getElementById('msgs');
   stickBottom = (box.scrollHeight - box.scrollTop - box.clientHeight < 60);
 });
+document.getElementById('back').addEventListener('click', () => {
+  const m = mainEl();
+  const view = m ? m.className : '';
+  if (view === 'view-chat') { setView('threads'); }
+  else { agent = null; conv = null; msgsState = []; hasMore = false; setView('agents'); loadAgents(); clearChat(); }
+});
+window.addEventListener('resize', resetViewForWidth);
 document.getElementById('q').addEventListener('input', loadThreads);
+resetViewForWidth();
 loadAgents();
 setInterval(() => { loadThreads(); if (conv) loadMessages(false); }, 5000);
 </script>
