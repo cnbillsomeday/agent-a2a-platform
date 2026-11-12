@@ -222,9 +222,13 @@ func (s *Server) uiMessagePage(conv string, limit int, before time.Time) ([]*Mes
 		merged = merged[len(merged)-limit:]
 	}
 
-	hasMore := len(hot) >= limit || len(cold) >= limit
-	if !hasMore && len(merged) > 0 && s.cold != nil {
-		hasMore = s.cold.HasBefore(conv, merged[0].CreatedAt)
+	hasMore := false
+	if len(merged) > 0 {
+		oldest := merged[0].CreatedAt
+		hasMore = s.archive.HasBefore(conv, oldest)
+		if !hasMore && s.cold != nil {
+			hasMore = s.cold.HasBefore(conv, oldest)
+		}
 	}
 	return merged, hasMore
 }

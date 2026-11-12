@@ -167,6 +167,21 @@ func (a *Archive) MessageByID(id string) *Message {
 	return nil
 }
 
+// HasBefore reports whether the hot window holds anything older than t.
+func (a *Archive) HasBefore(conv string, t time.Time) bool {
+	if a == nil || conv == "" || t.IsZero() {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, m := range a.msgs {
+		if m.ConvID == conv && m.CreatedAt.Before(t) {
+			return true
+		}
+	}
+	return false
+}
+
 // UnreadAfter counts messages in conv newer than the given read position.
 func (a *Archive) UnreadAfter(conv string, after time.Time) int {
 	if a == nil || conv == "" {
