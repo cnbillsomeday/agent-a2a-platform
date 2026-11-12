@@ -105,6 +105,7 @@ type UIConversation struct {
 	LastAt    time.Time `json:"last_at"`
 	FirstAt   time.Time `json:"first_at"`
 	LastMsgID string    `json:"last_msg_id"`
+	Unread    int       `json:"unread"`
 }
 
 // Conversations groups archived messages by conversation, newest first.
@@ -149,6 +150,37 @@ func (a *Archive) Conversations(query, agent string, limit int) []UIConversation
 		out = out[:limit]
 	}
 	return out
+}
+
+// MessageByID returns an archived message by id, or nil.
+func (a *Archive) MessageByID(id string) *Message {
+	if a == nil || id == "" {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, m := range a.msgs {
+		if m.ID == id {
+			return m
+		}
+	}
+	return nil
+}
+
+// UnreadAfter counts messages in conv newer than the given read position.
+func (a *Archive) UnreadAfter(conv string, after time.Time) int {
+	if a == nil || conv == "" {
+		return 0
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, m := range a.msgs {
+		if m.ConvID == conv && m.CreatedAt.After(after) {
+			n++
+		}
+	}
+	return n
 }
 
 // Agents returns every participant seen in the archive, sorted.

@@ -122,6 +122,12 @@ func New(opts Options) (*Instance, error) {
 	srv.uiUser = opts.UIUser
 	srv.uiPass = opts.UIPass
 	srv.uiAvatarDir = opts.UIAvatarDir
+	readState, err := openReadState(filepath.Join(opts.DataDir, "ui-read.json"))
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("a2a server: open ui read state: %w", err)
+	}
+	srv.readState = readState
 
 	inst := &Instance{
 		opts:    opts,
@@ -307,6 +313,7 @@ func buildMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("GET /ui/", s.handleUI)
 	mux.HandleFunc("GET /ui/avatar/{slug}", s.handleUIAvatar)
 	mux.HandleFunc("GET /api/ui/agents", s.handleUIAgents)
+	mux.HandleFunc("POST /api/ui/read", s.handleUIRead)
 	mux.HandleFunc("GET /api/ui/conversations", s.handleUIConversations)
 	mux.HandleFunc("GET /api/ui/messages", s.handleUIMessages)
 

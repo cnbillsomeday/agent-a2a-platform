@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -60,8 +61,9 @@ func (s *Server) handleUIAvatar(w http.ResponseWriter, r *http.Request) {
 
 // uiAgent is one row in the contact column.
 type uiAgent struct {
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	Slug   string `json:"slug"`
+	Name   string `json:"name"`
+	Unread int    `json:"unread"`
 }
 
 // handleUIAgents returns the known participants (config agents + archive).
@@ -84,6 +86,23 @@ func (s *Server) handleUIAgents(w http.ResponseWriter, r *http.Request) {
 			seen[slug] = uiAgent{Slug: slug, Name: slug}
 		}
 	}
+	// Aggregate unread per agent across every conversation it takes part in.
+	convs := s.archive.Conversations("", "", 0)
+	for _, c := range convs {
+		n := s.archive.UnreadAfter(c.ID, s.readState.get(c.ID))
+		if n == 0 {
+			continue
+		}
+		if a, ok := seen[c.From]; ok {
+			a.Unread += n
+			seen[c.From] = a
+		}
+		if a, ok := seen[c.To]; ok {
+			a.Unread += n
+			seen[c.To] = a
+		}
+	}
+
 	out := make([]uiAgent, 0, len(seen))
 	for _, a := range seen {
 		out = append(out, a)
@@ -106,6 +125,9 @@ func (s *Server) handleUIConversations(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("agent"),
 		limit,
 	)
+	for i := range list {
+		list[i].Unread = s.archive.UnreadAfter(list[i].ID, s.readState.get(list[i].ID))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conversations": list,
 		"total":         s.archive.Count(),
@@ -134,6 +156,42 @@ func (s *Server) handleUIMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs := s.archive.Messages(conv, limit, before)
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+}
+
+// handleUIRead advances the read position of one conversation.
+func (s *Server) handleUIRead(w http.ResponseWriter, r *http.Request) {
+	if !s.uiAuth(w, r) {
+		return
+	}
+	var body struct {
+		Conv   string `json:"conv"`
+		LastID string `json:"last_id"`
+		LastAt string `json:"last_at"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	var at time.Time
+	if body.LastID != "" {
+		if m := s.archive.MessageByID(body.LastID); m != nil {
+			at = m.CreatedAt
+		}
+	}
+	if at.IsZero() && body.LastAt != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, body.LastAt); err == nil {
+			at = ts
+		}
+	}
+	if body.Conv == "" || at.IsZero() {
+		http.Error(w, "conv and last_id/last_at are required", http.StatusBadRequest)
+		return
+	}
+	if err := s.readState.mark(body.Conv, at); err != nil {
+		http.Error(w, "failed to persist read state", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func parseIntDefault(raw string, def int) int {
@@ -180,6 +238,7 @@ const uiHTML = `<!doctype html>
   .agent.active { background:#1d2431; }
   .avatar { position:relative; overflow:hidden; width:34px; height:34px; border-radius:50%; background:#2a3550; color:#cfd8ea; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; flex:0 0 34px; }
   .avatar img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .badge { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; padding:0 5px; margin-left:auto; border-radius:9px; background:#e5484d; color:#fff; font-size:11px; font-weight:600; }
   .agent .name { font-weight:600; }
   .agent .slug { color:#6f7a90; font-size:11px; }
   .thread { padding:9px 12px; border-bottom:1px solid #171b23; cursor:pointer; }
@@ -238,7 +297,8 @@ async function loadAgents() {
     const div = document.createElement('div');
     div.className = 'agent' + (agent === a.slug ? ' active' : '');
     div.innerHTML = '<div class="avatar"><span>' + esc(initials(a.name)) + '</span><img src="/ui/avatar/' + encodeURIComponent(a.slug) + '.png" alt="" onerror="this.style.display=\'none\'"></div>'
-      + '<div><div class="name">' + esc(a.name) + '</div><div class="slug">' + esc(a.slug) + '</div></div>';
+      + '<div><div class="name">' + esc(a.name) + '</div><div class="slug">' + esc(a.slug) + '</div></div>'
+      + (a.unread > 0 ? '<span class="badge">' + a.unread + '</span>' : '');
     div.onclick = () => { agent = a.slug; conv = null; loadAgents(); loadThreads(); clearChat(); };
     box.appendChild(div);
   });
@@ -260,7 +320,7 @@ async function loadThreads() {
     div.className = 'thread' + (conv === c.id ? ' active' : '');
     div.innerHTML = '<div class="top"><span>' + esc(display(peer)) + '</span><span class="time">' + fmt(c.last_at) + '</span></div>'
       + '<div class="preview">' + esc(c.last_body).slice(0,90) + '</div>'
-      + '<div class="count">' + c.count + ' 条</div>';
+      + '<div class="count">' + c.count + ' 条' + (c.unread > 0 ? ' · <span class="badge" style="margin-left:4px">' + c.unread + '</span>' : '') + '</div>';
     div.onclick = () => { conv = c.id; loadThreads(); loadMessages(); };
     box.appendChild(div);
   });
@@ -283,6 +343,14 @@ async function loadMessages() {
     box.appendChild(div);
   });
   box.scrollTop = box.scrollHeight;
+  if ((data.messages || []).length) {
+    const last = data.messages[data.messages.length - 1];
+    fetch('/api/ui/read', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({conv: conv, last_id: last.id})
+    }).then(() => setTimeout(() => { loadThreads(); loadAgents(); }, 250));
+  }
 }
 
 function clearChat() {
