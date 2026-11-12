@@ -108,7 +108,7 @@ type UIConversation struct {
 }
 
 // Conversations groups archived messages by conversation, newest first.
-func (a *Archive) Conversations(query string, limit int) []UIConversation {
+func (a *Archive) Conversations(query, agent string, limit int) []UIConversation {
 	if a == nil {
 		return []UIConversation{}
 	}
@@ -119,6 +119,9 @@ func (a *Archive) Conversations(query string, limit int) []UIConversation {
 	index := make(map[string]*UIConversation, 64)
 	order := make([]string, 0, 64)
 	for _, m := range a.msgs {
+		if agent != "" && m.From != agent && m.To != agent {
+			continue
+		}
 		if query != "" {
 			hay := strings.ToLower(m.From + " " + m.To + " " + m.Body)
 			if !strings.Contains(hay, query) {
@@ -145,6 +148,26 @@ func (a *Archive) Conversations(query string, limit int) []UIConversation {
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
+	return out
+}
+
+// Agents returns every participant seen in the archive, sorted.
+func (a *Archive) Agents() []string {
+	if a == nil {
+		return []string{}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	seen := make(map[string]struct{}, 16)
+	for _, m := range a.msgs {
+		seen[m.From] = struct{}{}
+		seen[m.To] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
 	return out
 }
 

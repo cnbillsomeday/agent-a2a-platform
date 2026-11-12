@@ -302,6 +302,7 @@ func buildMux(s *Server) *http.ServeMux {
 	// -ui-user/-ui-pass are configured).
 	mux.HandleFunc("GET /ui", s.handleUI)
 	mux.HandleFunc("GET /ui/", s.handleUI)
+	mux.HandleFunc("GET /api/ui/agents", s.handleUIAgents)
 	mux.HandleFunc("GET /api/ui/conversations", s.handleUIConversations)
 	mux.HandleFunc("GET /api/ui/messages", s.handleUIMessages)
 

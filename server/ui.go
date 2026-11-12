@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/subtle"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -29,6 +30,40 @@ func (s *Server) uiAuth(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// uiAgent is one row in the contact column.
+type uiAgent struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+// handleUIAgents returns the known participants (config agents + archive).
+func (s *Server) handleUIAgents(w http.ResponseWriter, r *http.Request) {
+	if !s.uiAuth(w, r) {
+		return
+	}
+	seen := make(map[string]uiAgent, 16)
+	if s.cfg != nil {
+		for _, a := range s.cfg.Agents {
+			name := a.Name
+			if name == "" {
+				name = a.Slug
+			}
+			seen[a.Slug] = uiAgent{Slug: a.Slug, Name: name}
+		}
+	}
+	for _, slug := range s.archive.Agents() {
+		if _, ok := seen[slug]; !ok {
+			seen[slug] = uiAgent{Slug: slug, Name: slug}
+		}
+	}
+	out := make([]uiAgent, 0, len(seen))
+	for _, a := range seen {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, http.StatusOK, map[string]any{"agents": out})
+}
+
 // handleUIConversations returns the conversation list for the UI.
 func (s *Server) handleUIConversations(w http.ResponseWriter, r *http.Request) {
 	if !s.uiAuth(w, r) {
@@ -38,7 +73,11 @@ func (s *Server) handleUIConversations(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 2000 {
 		limit = 200
 	}
-	list := s.archive.Conversations(r.URL.Query().Get("q"), limit)
+	list := s.archive.Conversations(
+		r.URL.Query().Get("q"),
+		r.URL.Query().Get("agent"),
+		limit,
+	)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conversations": list,
 		"total":         s.archive.Count(),
@@ -80,7 +119,6 @@ func parseIntDefault(raw string, def int) int {
 	return n
 }
 
-
 // handleUI serves the single-page conversation browser.
 func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 	if !s.uiAuth(w, r) {
@@ -99,100 +137,134 @@ const uiHTML = `<!doctype html>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; background:#0f1115; color:#e6e6e6; }
-  header { padding: 14px 18px; border-bottom: 1px solid #232833; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  header .hint { color:#8b93a7; font-size:12px; }
-  input[type=search] { background:#171a21; border:1px solid #2a3040; color:#e6e6e6; padding:7px 10px; border-radius:8px; min-width:240px; }
-  main { display:flex; height: calc(100vh - 57px); }
-  #list { width: 360px; border-right:1px solid #232833; overflow:auto; }
-  .conv { padding:10px 14px; border-bottom:1px solid #1b1f28; cursor:pointer; }
-  .conv:hover { background:#171b23; }
-  .conv.active { background:#1d2431; }
-  .conv .top { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
-  .conv .time { color:#8b93a7; font-weight:400; font-size:12px; white-space:nowrap; }
-  .conv .preview { color:#9aa3b7; font-size:12px; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .conv .count { color:#5f6b84; font-size:11px; margin-top:2px; }
-  #pane { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-  #pane .head { padding:10px 16px; border-bottom:1px solid #232833; color:#9aa3b7; display:flex; justify-content:space-between; }
-  #pane .head b { color:#e6e6e6; }
-  #msgs { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
-  .msg { max-width: 760px; padding:9px 12px; border-radius:10px; background:#171a21; border:1px solid #222836; }
-  .msg .meta { font-size:11px; color:#7f889c; margin-bottom:4px; display:flex; gap:8px; }
+  html, body { height: 100%; }
+  body { margin:0; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; background:#0f1115; color:#e6e6e6; overflow:hidden; }
+  header { height:52px; padding:0 18px; border-bottom:1px solid #232833; display:flex; align-items:center; gap:14px; }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  header .stat { color:#8b93a7; font-size:12px; }
+  header input { margin-left:auto; background:#171a21; border:1px solid #2a3040; color:#e6e6e6; padding:7px 10px; border-radius:8px; min-width:260px; }
+  main { display:grid; grid-template-columns:200px 330px 1fr; height:calc(100% - 52px); }
+  .col { overflow:auto; border-right:1px solid #232833; }
+  .col:last-child { border-right:none; }
+  .col-title { position:sticky; top:0; background:#12151c; padding:9px 12px; font-size:12px; color:#8b93a7; border-bottom:1px solid #1b1f28; z-index:2; }
+  .agent { display:flex; align-items:center; gap:9px; padding:9px 12px; cursor:pointer; border-bottom:1px solid #171b23; }
+  .agent:hover { background:#171b23; }
+  .agent.active { background:#1d2431; }
+  .avatar { width:30px; height:30px; border-radius:50%; background:#2a3550; color:#cfd8ea; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; flex:0 0 30px; }
+  .agent .name { font-weight:600; }
+  .agent .slug { color:#6f7a90; font-size:11px; }
+  .thread { padding:9px 12px; border-bottom:1px solid #171b23; cursor:pointer; }
+  .thread:hover { background:#171b23; }
+  .thread.active { background:#1d2431; }
+  .thread .top { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+  .thread .time { color:#8b93a7; font-weight:400; font-size:11px; white-space:nowrap; }
+  .thread .preview { color:#9aa3b7; font-size:12px; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .thread .count { color:#5f6b84; font-size:11px; }
+  #chat { display:flex; flex-direction:column; overflow:hidden; }
+  #chat .head { padding:10px 16px; border-bottom:1px solid #232833; display:flex; justify-content:space-between; color:#9aa3b7; }
+  #chat .head b { color:#e6e6e6; }
+  #msgs { flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width:70%; padding:8px 12px; border-radius:12px; border:1px solid #222836; }
+  .msg .meta { font-size:11px; color:#7f889c; margin-bottom:3px; }
   .msg .body { white-space:pre-wrap; word-break:break-word; }
-  .msg.from-other { background:#141a22; }
+  .msg.left { align-self:flex-start; background:#171a21; border-top-left-radius:4px; }
+  .msg.right { align-self:flex-end; background:#22405e; border-color:#2b4f73; border-top-right-radius:4px; }
   .empty { padding:24px; color:#6b7488; }
 </style>
 </head>
 <body>
 <header>
   <h1>A2A 对话记录</h1>
-  <input id="q" type="search" placeholder="搜索：名字 / 内容">
-  <span class="hint" id="stat"></span>
+  <span class="stat" id="stat"></span>
+  <input id="q" type="search" placeholder="搜索内容 / 名字">
 </header>
 <main>
-  <div id="list"></div>
-  <div id="pane">
-    <div class="head"><span id="pane-title">选择左侧一个会话</span><span id="pane-meta"></span></div>
+  <div class="col" id="agents-col"><div class="col-title">对话人</div><div id="agents"></div></div>
+  <div class="col" id="threads-col"><div class="col-title">对话列表</div><div id="threads"></div></div>
+  <div class="col" id="chat">
+    <div class="head"><span id="chat-title">选择左侧的对话人</span><span id="chat-meta"></span></div>
     <div id="msgs"><div class="empty">还没有选择会话</div></div>
   </div>
 </main>
 <script>
-let current = null;
-let timer = null;
+let agent = null;      // selected contact slug
+let conv = null;       // selected conversation id
+let agentNames = {};
 
 function esc(s) {
   return (s || "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-function fmt(ts) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  return d.toLocaleString('zh-CN', {hour12:false});
+function fmt(ts) { return ts ? new Date(ts).toLocaleString('zh-CN',{hour12:false}) : ""; }
+function initials(s) { return (s || "?").slice(0,2).toUpperCase(); }
+function display(slug) { return agentNames[slug] || slug; }
+
+async function loadAgents() {
+  const r = await fetch('/api/ui/agents');
+  if (!r.ok) return;
+  const data = await r.json();
+  const box = document.getElementById('agents');
+  box.innerHTML = '';
+  (data.agents || []).forEach(a => {
+    agentNames[a.slug] = a.name;
+    const div = document.createElement('div');
+    div.className = 'agent' + (agent === a.slug ? ' active' : '');
+    div.innerHTML = '<div class="avatar">' + esc(initials(a.name)) + '</div>'
+      + '<div><div class="name">' + esc(a.name) + '</div><div class="slug">' + esc(a.slug) + '</div></div>';
+    div.onclick = () => { agent = a.slug; conv = null; loadAgents(); loadThreads(); clearChat(); };
+    box.appendChild(div);
+  });
+  if (!agent && (data.agents || []).length) { agent = data.agents[0].slug; loadAgents(); loadThreads(); }
 }
 
-async function loadList() {
+async function loadThreads() {
+  if (!agent) return;
   const q = document.getElementById('q').value.trim();
-  const r = await fetch('/api/ui/conversations?limit=300&q=' + encodeURIComponent(q));
-  if (!r.ok) { document.getElementById('stat').textContent = '加载失败 ' + r.status; return; }
+  const r = await fetch('/api/ui/conversations?agent=' + encodeURIComponent(agent) + '&limit=300&q=' + encodeURIComponent(q));
+  if (!r.ok) return;
   const data = await r.json();
   document.getElementById('stat').textContent = (data.total || 0) + ' 条归档消息';
-  const list = document.getElementById('list');
-  list.innerHTML = '';
+  const box = document.getElementById('threads');
+  box.innerHTML = '';
   (data.conversations || []).forEach(c => {
+    const peer = c.from === agent ? c.to : c.from;
     const div = document.createElement('div');
-    div.className = 'conv' + (current === c.id ? ' active' : '');
-    div.innerHTML = '<div class="top"><span>' + esc(c.from) + ' ⇄ ' + esc(c.to) + '</span><span class="time">' + fmt(c.last_at) + '</span></div>'
-      + '<div class="preview">' + esc(c.last_body).slice(0, 80) + '</div>'
+    div.className = 'thread' + (conv === c.id ? ' active' : '');
+    div.innerHTML = '<div class="top"><span>' + esc(display(peer)) + '</span><span class="time">' + fmt(c.last_at) + '</span></div>'
+      + '<div class="preview">' + esc(c.last_body).slice(0,90) + '</div>'
       + '<div class="count">' + c.count + ' 条</div>';
-    div.onclick = () => selectConv(c);
-    list.appendChild(div);
+    div.onclick = () => { conv = c.id; loadThreads(); loadMessages(); };
+    box.appendChild(div);
   });
-  if (!(data.conversations || []).length) list.innerHTML = '<div class="empty">没有记录</div>';
+  if (!(data.conversations || []).length) box.innerHTML = '<div class="empty">没有对话</div>';
 }
 
-async function selectConv(c) {
-  current = c.id;
-  document.querySelectorAll('.conv').forEach(el => el.classList.remove('active'));
-  document.getElementById('pane-title').innerHTML = '<b>' + esc(c.from) + ' ⇄ ' + esc(c.to) + '</b>';
-  document.getElementById('pane-meta').textContent = fmt(c.first_at) + ' 起';
-  const r = await fetch('/api/ui/messages?conv=' + encodeURIComponent(c.id) + '&limit=500');
-  if (!r.ok) { document.getElementById('msgs').textContent = '加载失败 ' + r.status; return; }
+async function loadMessages() {
+  if (!conv) return;
+  const r = await fetch('/api/ui/messages?conv=' + encodeURIComponent(conv) + '&limit=500');
+  if (!r.ok) return;
   const data = await r.json();
   const box = document.getElementById('msgs');
   box.innerHTML = '';
   (data.messages || []).forEach(m => {
+    const mine = m.from === agent;
     const div = document.createElement('div');
-    div.className = 'msg';
-    div.innerHTML = '<div class="meta"><b>' + esc(m.from) + '</b><span>' + fmt(m.created_at) + '</span></div>'
+    div.className = 'msg ' + (mine ? 'right' : 'left');
+    div.innerHTML = '<div class="meta">' + esc(display(m.from)) + ' · ' + fmt(m.created_at) + '</div>'
       + '<div class="body">' + esc(m.body) + '</div>';
     box.appendChild(div);
   });
   box.scrollTop = box.scrollHeight;
 }
 
-document.getElementById('q').addEventListener('input', () => { loadList(); });
-loadList();
-timer = setInterval(() => { loadList(); if (current) { /* keep list fresh */ } }, 5000);
+function clearChat() {
+  document.getElementById('msgs').innerHTML = '<div class="empty">还没有选择会话</div>';
+  document.getElementById('chat-title').textContent = '选择左侧的对话人';
+  document.getElementById('chat-meta').textContent = '';
+}
+
+document.getElementById('q').addEventListener('input', loadThreads);
+loadAgents();
+setInterval(() => { loadThreads(); if (conv) loadMessages(); }, 5000);
 </script>
 </body>
 </html>

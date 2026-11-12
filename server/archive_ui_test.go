@@ -30,7 +30,7 @@ func TestArchiveAppendAndQuery(t *testing.T) {
 		t.Fatalf("count = %d, want 3", a.Count())
 	}
 
-	convs := a.Conversations("", 10)
+	convs := a.Conversations("", "", 10)
 	if len(convs) != 2 {
 		t.Fatalf("conversations = %d, want 2", len(convs))
 	}
@@ -60,8 +60,13 @@ func TestArchiveAppendAndQuery(t *testing.T) {
 }
 
 func TestUIConversationsRequireAuth(t *testing.T) {
-	a := &Archive{}
-	_ = a.Append(&Message{ID: "m1", ConvID: "c1", From: "fa", To: "vu", Body: "hello", CreatedAt: time.Now().UTC()})
+	a, err := OpenArchive(filepath.Join(t.TempDir(), "archive.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Append(&Message{ID: "m1", ConvID: "c1", From: "fa", To: "vu", Body: "hello", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
 	s := &Server{archive: a, uiUser: "zlin", uiPass: "secret"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ui/conversations", nil)
@@ -97,5 +102,24 @@ func TestUIConversationsRequireAuth(t *testing.T) {
 	s2.handleUI(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("disabled UI = %d, want 404", rec.Code)
+	}
+}
+
+func TestArchiveAgentFilter(t *testing.T) {
+	a, err := OpenArchive(filepath.Join(t.TempDir(), "archive.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	_ = a.Append(&Message{ID: "m1", ConvID: "c1", From: "fa", To: "vu", Body: "x", CreatedAt: now})
+	_ = a.Append(&Message{ID: "m2", ConvID: "c2", From: "mei", To: "ao", Body: "y", CreatedAt: now})
+	if got := a.Conversations("", "fa", 10); len(got) != 1 || got[0].ID != "c1" {
+		t.Fatalf("agent filter = %+v", got)
+	}
+	if got := a.Conversations("", "nobody", 10); len(got) != 0 {
+		t.Fatalf("unknown agent = %+v", got)
+	}
+	if agents := a.Agents(); len(agents) != 4 {
+		t.Fatalf("agents = %v", agents)
 	}
 }
