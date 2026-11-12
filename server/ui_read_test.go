@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 )
 
-func TestReadStatePersistsAndNeverMovesBackwards(t *testing.T) {
+func TestReadStatePersistsAndNoRewind(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ui-read.json")
 	r, err := openReadState(path)
 	if err != nil {
