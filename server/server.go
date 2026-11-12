@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -122,10 +123,24 @@ func New(opts Options) (*Instance, error) {
 	srv.uiUser = opts.UIUser
 	srv.uiPass = opts.UIPass
 	srv.uiAvatarDir = opts.UIAvatarDir
-	readState, err := openReadState(filepath.Join(opts.DataDir, "ui-read.json"))
+	readPath := filepath.Join(opts.DataDir, "ui-read.json")
+	firstRun := false
+	if _, statErr := os.Stat(readPath); os.IsNotExist(statErr) {
+		firstRun = true
+	}
+	readState, err := openReadState(readPath)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("a2a server: open ui read state: %w", err)
+	}
+	if firstRun {
+		// First start with the read-marker feature: treat everything already
+		// archived as read so the UI starts with a clean slate and only new
+		// messages show badges.
+		now := time.Now().UTC()
+		for _, c := range archive.Conversations("", "", 0) {
+			_ = readState.mark(c.ID, now)
+		}
 	}
 	srv.readState = readState
 
