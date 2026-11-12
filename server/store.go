@@ -43,6 +43,15 @@ type Store struct {
 	path     string
 	messages []*Message
 	retain   time.Duration
+	archive  *Archive
+}
+
+// SetArchive attaches a long-lived archive that receives every accepted
+// message. It is optional; nil simply disables archiving.
+func (s *Store) SetArchive(a *Archive) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.archive = a
 }
 
 func NewStore(path string, retain time.Duration) (*Store, error) {
@@ -164,6 +173,9 @@ func (s *Store) AddMessageSigned(from, to, body string, signed bool, sigState st
 	if err := s.saveLocked(); err != nil {
 		s.messages = s.messages[:len(s.messages)-1]
 		return nil, err
+	}
+	if s.archive != nil {
+		_ = s.archive.Append(m) // best effort: never fail a send on archive I/O
 	}
 	return m, nil
 }

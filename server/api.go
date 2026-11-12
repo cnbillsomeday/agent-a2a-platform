@@ -29,6 +29,11 @@ type Server struct {
 	nonces   *nonceCache
 	presence *presenceStore
 	signMode string
+
+	// Read-only conversation browser (archive + HTTP Basic auth).
+	archive *Archive
+	uiUser  string
+	uiPass  string
 }
 
 func NewServer(cfg *Config, store *Store, logger *log.Logger, signModeOverride string) *Server {

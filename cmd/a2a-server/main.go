@@ -64,6 +64,9 @@ Run flags:
   -domain string      public domain for did:web (env A2A_DOMAIN; default %s)
   -retention duration message retention (env A2A_RETENTION; default %s)
   -sign-mode string   off | warn | strict (env A2A_SIGN_MODE)
+  -archive string     append-only conversation archive (env A2A_ARCHIVE; default <dir>/archive.jsonl)
+  -ui-user string     web UI basic-auth user (env A2A_UI_USER; UI disabled when empty)
+  -ui-pass string     web UI basic-auth password (env A2A_UI_PASS)
   -allow-default-agents  allow the built-in demo agents
 `, defaultAddr, defaultDir, defaultDomain, defaultRetention)
 }
@@ -76,6 +79,9 @@ func runServer(args []string) int {
 	retention := fs.Duration("retention", envDuration("A2A_RETENTION", defaultRetention), "message retention")
 	signMode := fs.String("sign-mode", os.Getenv("A2A_SIGN_MODE"), "off|warn|strict")
 	allowDefault := fs.Bool("allow-default-agents", false, "allow built-in demo agents")
+	archive := fs.String("archive", os.Getenv("A2A_ARCHIVE"), "append-only conversation archive path")
+	uiUser := fs.String("ui-user", os.Getenv("A2A_UI_USER"), "web UI basic-auth user")
+	uiPass := fs.String("ui-pass", os.Getenv("A2A_UI_PASS"), "web UI basic-auth password")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -88,6 +94,9 @@ func runServer(args []string) int {
 		Retention:          *retention,
 		SignMode:           strings.TrimSpace(*signMode),
 		AllowDefaultAgents: *allowDefault,
+		ArchivePath:        strings.TrimSpace(*archive),
+		UIUser:             strings.TrimSpace(*uiUser),
+		UIPass:             *uiPass,
 		Logger:             logger,
 	})
 	if err != nil {

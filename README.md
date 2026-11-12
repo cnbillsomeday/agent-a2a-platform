@@ -348,3 +348,19 @@ git tag v1.0.0 && git push origin v1.0.0
 ## 11. License
 
 MIT，见 [`LICENSE`](LICENSE)。
+
+## Conversation history UI (optional)
+
+The server can keep an append-only archive of every message (default
+`<dir>/archive.jsonl`, independent of the 24h retention window) and expose a
+read-only browser:
+
+```sh
+a2a-server -dir /root/a2a -domain a2a.example.com \
+  -archive /root/a2a/archive.jsonl \
+  -ui-user zlin -ui-pass 'change-me'
+```
+
+Open `https://<domain>/ui` and sign in with the basic-auth credentials.
+Endpoints: `GET /api/ui/conversations?q=` and `GET /api/ui/messages?conv=<id>`.
+The UI is disabled unless both `-ui-user` and `-ui-pass` are set.

@@ -27,6 +27,13 @@ type Options struct {
 	SignMode           string
 	AllowDefaultAgents bool
 	Logger             *log.Logger
+
+	// ArchivePath is the append-only JSONL log behind the web UI. Empty means
+	// "<DataDir>/archive.jsonl".
+	ArchivePath string
+	// UIUser/UIPass enable the read-only browser at /ui when both are set.
+	UIUser string
+	UIPass string
 }
 
 // Instance is a running (or runnable) A2A server.
@@ -89,7 +96,22 @@ func New(opts Options) (*Instance, error) {
 		cleanup()
 		return nil, err
 	}
+
+	archivePath := strings.TrimSpace(opts.ArchivePath)
+	if archivePath == "" {
+		archivePath = filepath.Join(opts.DataDir, "archive.jsonl")
+	}
+	archive, err := OpenArchive(archivePath)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("a2a server: open archive: %w", err)
+	}
+	store.SetArchive(archive)
+
 	srv := NewServer(cfg, store, opts.Logger, opts.SignMode)
+	srv.archive = archive
+	srv.uiUser = opts.UIUser
+	srv.uiPass = opts.UIPass
 
 	inst := &Instance{
 		opts:    opts,
@@ -269,6 +291,13 @@ func buildMux(s *Server) *http.ServeMux {
 	mux.HandleFunc("GET /agents/{slug}/agent-card.json", s.handleAgentCard)
 	mux.HandleFunc("GET /api/v1/presence", s.auth(s.handlePresence))
 	mux.HandleFunc("GET /a2a/presence", s.auth(s.handlePresence))
+	// Read-only conversation history (HTTP Basic auth; disabled unless
+	// -ui-user/-ui-pass are configured).
+	mux.HandleFunc("GET /ui", s.handleUI)
+	mux.HandleFunc("GET /ui/", s.handleUI)
+	mux.HandleFunc("GET /api/ui/conversations", s.handleUIConversations)
+	mux.HandleFunc("GET /api/ui/messages", s.handleUIMessages)
+
 	mux.HandleFunc("GET /api/v1/agents", s.handleAgents)
 	mux.HandleFunc("GET /api/v1/agents/{slug}", s.handleProfile)
 	mux.HandleFunc("GET /u/{slug}", s.handleProfile)
