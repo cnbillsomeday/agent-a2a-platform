@@ -34,6 +34,8 @@ type Options struct {
 	// UIUser/UIPass enable the read-only browser at /ui when both are set.
 	UIUser string
 	UIPass string
+	// UIAvatarDir optionally holds <slug>.png avatars for the UI.
+	UIAvatarDir string
 }
 
 // Instance is a running (or runnable) A2A server.
@@ -119,6 +121,7 @@ func New(opts Options) (*Instance, error) {
 	srv.archive = archive
 	srv.uiUser = opts.UIUser
 	srv.uiPass = opts.UIPass
+	srv.uiAvatarDir = opts.UIAvatarDir
 
 	inst := &Instance{
 		opts:    opts,
@@ -302,6 +305,7 @@ func buildMux(s *Server) *http.ServeMux {
 	// -ui-user/-ui-pass are configured).
 	mux.HandleFunc("GET /ui", s.handleUI)
 	mux.HandleFunc("GET /ui/", s.handleUI)
+	mux.HandleFunc("GET /ui/avatar/{slug}", s.handleUIAvatar)
 	mux.HandleFunc("GET /api/ui/agents", s.handleUIAgents)
 	mux.HandleFunc("GET /api/ui/conversations", s.handleUIConversations)
 	mux.HandleFunc("GET /api/ui/messages", s.handleUIMessages)

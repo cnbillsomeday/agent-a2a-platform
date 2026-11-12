@@ -67,6 +67,7 @@ Run flags:
   -archive string     append-only conversation archive (env A2A_ARCHIVE; default <dir>/archive.jsonl)
   -ui-user string     web UI basic-auth user (env A2A_UI_USER; UI disabled when empty)
   -ui-pass string     web UI basic-auth password (env A2A_UI_PASS)
+  -ui-avatars string  directory with <slug>.png avatars for the UI (env A2A_UI_AVATARS)
   -allow-default-agents  allow the built-in demo agents
 `, defaultAddr, defaultDir, defaultDomain, defaultRetention)
 }
@@ -82,6 +83,7 @@ func runServer(args []string) int {
 	archive := fs.String("archive", os.Getenv("A2A_ARCHIVE"), "append-only conversation archive path")
 	uiUser := fs.String("ui-user", os.Getenv("A2A_UI_USER"), "web UI basic-auth user")
 	uiPass := fs.String("ui-pass", os.Getenv("A2A_UI_PASS"), "web UI basic-auth password")
+	uiAvatars := fs.String("ui-avatars", os.Getenv("A2A_UI_AVATARS"), "directory with <slug>.png avatars")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -97,6 +99,7 @@ func runServer(args []string) int {
 		ArchivePath:        strings.TrimSpace(*archive),
 		UIUser:             strings.TrimSpace(*uiUser),
 		UIPass:             *uiPass,
+		UIAvatarDir:        strings.TrimSpace(*uiAvatars),
 		Logger:             logger,
 	})
 	if err != nil {

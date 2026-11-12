@@ -31,9 +31,10 @@ type Server struct {
 	signMode string
 
 	// Read-only conversation browser (archive + HTTP Basic auth).
-	archive *Archive
-	uiUser  string
-	uiPass  string
+	archive     *Archive
+	uiUser      string
+	uiPass      string
+	uiAvatarDir string
 }
 
 func NewServer(cfg *Config, store *Store, logger *log.Logger, signModeOverride string) *Server {

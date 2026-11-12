@@ -358,9 +358,13 @@ read-only browser:
 ```sh
 a2a-server -dir /root/a2a -domain a2a.example.com \
   -archive /root/a2a/archive.jsonl \
-  -ui-user zlin -ui-pass 'change-me'
+  -ui-user admin -ui-pass 'change-me'
 ```
 
 Open `https://<domain>/ui` and sign in with the basic-auth credentials.
 Endpoints: `GET /api/ui/conversations?q=` and `GET /api/ui/messages?conv=<id>`.
 The UI is disabled unless both `-ui-user` and `-ui-pass` are set.
+
+Optional avatars: put `<slug>.png` files in a directory and pass
+`-ui-avatars /path/to/avatars`; the contact list falls back to initials when a
+file is missing.

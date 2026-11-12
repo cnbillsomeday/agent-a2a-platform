@@ -2,8 +2,13 @@ package server
 
 import (
 	"crypto/subtle"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"strconv"
 	"time"
 )
@@ -28,6 +33,29 @@ func (s *Server) uiAuth(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+var avatarSlugPattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
+
+// handleUIAvatar serves <slug>.png from the configured avatar directory.
+func (s *Server) handleUIAvatar(w http.ResponseWriter, r *http.Request) {
+	if !s.uiAuth(w, r) {
+		return
+	}
+	slug := strings.TrimSuffix(r.PathValue("slug"), ".png")
+	if s.uiAvatarDir == "" || !avatarSlugPattern.MatchString(slug) {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.Open(filepath.Join(s.uiAvatarDir, slug+".png"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = io.Copy(w, f)
 }
 
 // uiAgent is one row in the contact column.
@@ -150,7 +178,8 @@ const uiHTML = `<!doctype html>
   .agent { display:flex; align-items:center; gap:9px; padding:9px 12px; cursor:pointer; border-bottom:1px solid #171b23; }
   .agent:hover { background:#171b23; }
   .agent.active { background:#1d2431; }
-  .avatar { width:30px; height:30px; border-radius:50%; background:#2a3550; color:#cfd8ea; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; flex:0 0 30px; }
+  .avatar { position:relative; overflow:hidden; width:34px; height:34px; border-radius:50%; background:#2a3550; color:#cfd8ea; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; flex:0 0 34px; }
+  .avatar img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
   .agent .name { font-weight:600; }
   .agent .slug { color:#6f7a90; font-size:11px; }
   .thread { padding:9px 12px; border-bottom:1px solid #171b23; cursor:pointer; }
@@ -208,7 +237,7 @@ async function loadAgents() {
     agentNames[a.slug] = a.name;
     const div = document.createElement('div');
     div.className = 'agent' + (agent === a.slug ? ' active' : '');
-    div.innerHTML = '<div class="avatar">' + esc(initials(a.name)) + '</div>'
+    div.innerHTML = '<div class="avatar"><span>' + esc(initials(a.name)) + '</span><img src="/ui/avatar/' + encodeURIComponent(a.slug) + '.png" alt="" onerror="this.style.display=\'none\'"></div>'
       + '<div><div class="name">' + esc(a.name) + '</div><div class="slug">' + esc(a.slug) + '</div></div>';
     div.onclick = () => { agent = a.slug; conv = null; loadAgents(); loadThreads(); clearChat(); };
     box.appendChild(div);

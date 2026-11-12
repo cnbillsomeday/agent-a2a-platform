@@ -17,9 +17,9 @@ func TestArchiveAppendAndQuery(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	msgs := []*Message{
-		{ID: "m1", ConvID: "c1", From: "fa", To: "vu", Body: "hello", CreatedAt: now.Add(-2 * time.Minute)},
-		{ID: "m2", ConvID: "c1", From: "vu", To: "fa", Body: "hi there", CreatedAt: now.Add(-1 * time.Minute)},
-		{ID: "m3", ConvID: "c2", From: "wei", To: "ao", Body: "ping", CreatedAt: now},
+		{ID: "m1", ConvID: "c1", From: "alice", To: "bob", Body: "hello", CreatedAt: now.Add(-2 * time.Minute)},
+		{ID: "m2", ConvID: "c1", From: "bob", To: "alice", Body: "hi there", CreatedAt: now.Add(-1 * time.Minute)},
+		{ID: "m3", ConvID: "c2", From: "carol", To: "dave", Body: "ping", CreatedAt: now},
 	}
 	for _, m := range msgs {
 		if err := a.Append(m); err != nil {
@@ -64,10 +64,10 @@ func TestUIConversationsRequireAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Append(&Message{ID: "m1", ConvID: "c1", From: "fa", To: "vu", Body: "hello", CreatedAt: time.Now().UTC()}); err != nil {
+	if err := a.Append(&Message{ID: "m1", ConvID: "c1", From: "alice", To: "bob", Body: "hello", CreatedAt: time.Now().UTC()}); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{archive: a, uiUser: "zlin", uiPass: "secret"}
+	s := &Server{archive: a, uiUser: "admin", uiPass: "secret"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/ui/conversations", nil)
 	rec := httptest.NewRecorder()
@@ -77,7 +77,7 @@ func TestUIConversationsRequireAuth(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/ui/conversations", nil)
-	req.SetBasicAuth("zlin", "wrong")
+	req.SetBasicAuth("admin", "wrong")
 	rec = httptest.NewRecorder()
 	s.handleUIConversations(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -85,7 +85,7 @@ func TestUIConversationsRequireAuth(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/ui/conversations", nil)
-	req.SetBasicAuth("zlin", "secret")
+	req.SetBasicAuth("admin", "secret")
 	rec = httptest.NewRecorder()
 	s.handleUIConversations(rec, req)
 	if rec.Code != http.StatusOK {
@@ -111,9 +111,9 @@ func TestArchiveAgentFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	_ = a.Append(&Message{ID: "m1", ConvID: "c1", From: "fa", To: "vu", Body: "x", CreatedAt: now})
-	_ = a.Append(&Message{ID: "m2", ConvID: "c2", From: "mei", To: "ao", Body: "y", CreatedAt: now})
-	if got := a.Conversations("", "fa", 10); len(got) != 1 || got[0].ID != "c1" {
+	_ = a.Append(&Message{ID: "m1", ConvID: "c1", From: "alice", To: "bob", Body: "x", CreatedAt: now})
+	_ = a.Append(&Message{ID: "m2", ConvID: "c2", From: "erin", To: "dave", Body: "y", CreatedAt: now})
+	if got := a.Conversations("", "alice", 10); len(got) != 1 || got[0].ID != "c1" {
 		t.Fatalf("agent filter = %+v", got)
 	}
 	if got := a.Conversations("", "nobody", 10); len(got) != 0 {
