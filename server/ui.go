@@ -152,7 +152,12 @@ func (s *Server) handleUIConversations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i := range list {
-		list[i].Unread = s.archive.UnreadAfter(list[i].ID, s.readState.get(list[i].ID))
+		readAt := s.readState.get(list[i].ID)
+		list[i].Unread = s.archive.UnreadAfter(list[i].ID, readAt)
+		if !readAt.IsZero() {
+			t := readAt
+			list[i].ReadAt = &t
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"conversations": list,
@@ -337,6 +342,9 @@ const uiHTML = `<!doctype html>
   .older-bar { display:flex; justify-content:center; padding:4px 0 10px; }
   .older-bar button { background:#1c2330; border:1px solid #2a3040; color:#9fb0c8; border-radius:8px; padding:5px 12px; cursor:pointer; }
   .older-bar button:disabled { opacity:.5; cursor:default; }
+  .unread-divider { display:flex; align-items:center; gap:8px; color:#e5484d; font-size:11px; margin:2px 0; }
+  .unread-divider:before, .unread-divider:after { content:""; flex:1; height:1px; background:#e5484d44; }
+  .msg.first-unread { border-color:#e5484d; box-shadow:0 0 0 1px #e5484d55; }
   @media (max-width: 820px) {
     header { padding:0 12px; gap:8px; flex-wrap:wrap; padding-bottom:8px; }
     header h1 { font-size:14px; }
@@ -374,7 +382,9 @@ let stickBottom = true; // follow new messages only while the reader is at the b
 let msgsState = [];     // messages currently on screen, oldest first
 let hasMore = false;    // older pages may exist on disk
 let loadingOlder = false;
-let currentPeer = null; // peer of the open thread (for the mobile title)
+let currentPeer = null;  // peer of the open thread (for the mobile title)
+let unreadAt = null;     // read marker of the thread being opened (one-shot jump)
+let firstUnreadID = null; // first message after the marker
 
 const mainEl = () => document.getElementById('main');
 function setView(v) { const m = mainEl(); if (m) m.className = 'view-' + v; }
@@ -423,7 +433,11 @@ async function loadThreads() {
     div.innerHTML = '<div class="top"><span>' + esc(display(peer)) + '</span><span class="time">' + fmt(c.last_at) + '</span></div>'
       + '<div class="preview">' + esc(c.last_body).slice(0,90) + '</div>'
       + '<div class="count">' + c.count + ' 条' + (c.unread > 0 ? ' · <span class="badge" style="margin-left:4px">' + c.unread + '</span>' : '') + '</div>';
-    div.onclick = () => { conv = c.id; currentPeer = peer; msgsState = []; hasMore = false; stickBottom = true; setView('chat'); loadThreads(); loadMessages(true); };
+    div.onclick = () => {
+      conv = c.id; currentPeer = peer; msgsState = []; hasMore = false; stickBottom = true;
+      unreadAt = (c.unread > 0 && c.read_at) ? c.read_at : null;
+      setView('chat'); loadThreads(); loadMessages(true);
+    };
     box.appendChild(div);
   });
   if (!(data.conversations || []).length) box.innerHTML = '<div class="empty">没有对话</div>';
@@ -444,8 +458,15 @@ function renderMessages(scrollBottom) {
   }
   msgsState.forEach(m => {
     const mine = m.from === agent;
+    if (m.id === firstUnreadID) {
+      const sep = document.createElement('div');
+      sep.className = 'unread-divider';
+      sep.textContent = '未读';
+      box.appendChild(sep);
+    }
     const div = document.createElement('div');
-    div.className = 'msg ' + (mine ? 'right' : 'left');
+    div.className = 'msg ' + (mine ? 'right' : 'left') + (m.id === firstUnreadID ? ' first-unread' : '');
+    div.dataset.mid = m.id;
     div.innerHTML = '<div class="meta">' + esc(display(m.from)) + ' · ' + fmt(m.created_at) + '</div>'
       + '<div class="body">' + esc(m.body) + '</div>';
     box.appendChild(div);
@@ -465,9 +486,20 @@ async function loadMessages(reset) {
 
   if (reset) {
     if (currentPeer) document.getElementById('chat-title').textContent = display(currentPeer);
+    firstUnreadID = null;
+    if (unreadAt && fetched.length) {
+      const cut = new Date(unreadAt).getTime();
+      const hit = fetched.find(m => new Date(m.created_at).getTime() > cut);
+      if (hit) firstUnreadID = hit.id;
+    }
     msgsState = fetched;
     stickBottom = true;
     renderMessages(true);
+    if (firstUnreadID) {
+      const el = document.querySelector('[data-mid="' + firstUnreadID + '"]');
+      if (el) el.scrollIntoView({block: 'center'});
+    }
+    unreadAt = null;
   } else {
     const known = new Set(msgsState.map(m => m.id));
     const fresh = fetched.filter(m => !known.has(m.id));
@@ -481,7 +513,7 @@ async function loadMessages(reset) {
     }
   }
 
-  if (atBottom && fetched.length) {
+  if ((reset || atBottom) && fetched.length) {
     const last = fetched[fetched.length - 1];
     fetch('/api/ui/read', {
       method: 'POST',

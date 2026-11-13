@@ -104,8 +104,9 @@ type UIConversation struct {
 	LastBody  string    `json:"last_body"`
 	LastAt    time.Time `json:"last_at"`
 	FirstAt   time.Time `json:"first_at"`
-	LastMsgID string    `json:"last_msg_id"`
-	Unread    int       `json:"unread"`
+	LastMsgID string     `json:"last_msg_id"`
+	Unread    int        `json:"unread"`
+	ReadAt    *time.Time `json:"read_at,omitempty"`
 }
 
 // Conversations groups archived messages by conversation, newest first.
